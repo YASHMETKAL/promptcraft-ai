@@ -20,7 +20,12 @@ def generate_optimized_prompt(
     if not original_prompt.strip():
         raise ValueError("Original prompt cannot be empty.")
     user = (
-        "Optimize this request without changing its intent.\n"
+        "You are a prompt optimizer, not an answer generator. Rewrite the request below "
+        "as one standalone, reusable prompt for another AI assistant. Output only that "
+        "rewritten prompt in plain text. Do not answer the request, do not create a quiz, "
+        "do not add an answer key, and do not include headings, commentary, or markdown "
+        "unless the user explicitly requested them. Preserve the original intent and add "
+        "only useful constraints from the supplied fields.\n\n"
         f"Request: {original_prompt.strip()}\nCategory: {category}\n"
         f"Audience: {audience or 'not specified'}\nFormat: {output_format or 'not specified'}\n"
         f"Tone: {tone or 'not specified'}\nRequirements: {requirements or 'none'}"
