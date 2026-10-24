@@ -38,6 +38,11 @@ def main() -> None:
 
     config = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
     output_dir = args.output_dir or config["output_dir"]
+    bf16_supported = bool(
+        torch.cuda.is_available()
+        and getattr(torch.cuda, "is_bf16_supported", lambda: False)()
+    )
+    compute_dtype = torch.bfloat16 if bf16_supported else torch.float16
     data_files = {name: str(Path(args.data_dir) / f"{name}.jsonl") for name in ("train", "validation")}
     dataset = load_dataset("json", data_files=data_files)
     tokenizer = AutoTokenizer.from_pretrained(config["model_name"])
@@ -46,7 +51,10 @@ def main() -> None:
     model_kwargs = {}
     if args.quantized:
         from transformers import BitsAndBytesConfig
-        model_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=torch.float16)
+        model_kwargs["quantization_config"] = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_compute_dtype=compute_dtype,
+        )
     model = AutoModelForCausalLM.from_pretrained(config["model_name"], **model_kwargs)
     lora = LoraConfig(
         r=config["lora_r"], lora_alpha=config["lora_alpha"], lora_dropout=config["lora_dropout"],
@@ -58,11 +66,15 @@ def main() -> None:
         per_device_eval_batch_size=config["per_device_eval_batch_size"],
         gradient_accumulation_steps=config["gradient_accumulation_steps"],
         save_strategy="epoch", logging_steps=5, seed=config["seed"],
-        report_to="none", fp16=torch.cuda.is_available(),
+        report_to="none",
     )
     # Transformers 4.46 and later renamed this argument to eval_strategy.
     training_signature = inspect.signature(TrainingArguments.__init__).parameters
     training_kwargs["eval_strategy" if "eval_strategy" in training_signature else "evaluation_strategy"] = "epoch"
+    if "bf16" in training_signature:
+        training_kwargs["bf16"] = bf16_supported
+    if "fp16" in training_signature:
+        training_kwargs["fp16"] = bool(torch.cuda.is_available() and not bf16_supported)
     try:
         from trl import SFTConfig
     except ImportError:
