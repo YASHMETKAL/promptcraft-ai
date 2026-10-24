@@ -41,6 +41,18 @@ and `data/promptcraft_custom_dataset.jsonl`. Both contain `id`, `category`, `inp
 files are never overwritten. Quality labels and review status are reported, not used as
 ground truth. Near-duplicate inputs should be manually reviewed before academic evaluation.
 
+To create a separate 100-row augmented dataset, run:
+
+```bash
+python scripts/create_augmented_dataset.py
+```
+
+This combines the unchanged 82-row source with
+`data/promptcraft_ai_assisted_additions.csv` and writes
+`data/promptcraft_custom_dataset_100.csv`. All 18 additions are explicitly marked
+`AI-assisted draft - human review required` and `pending_human_rating`. Review all
+100 rows before making academic quality claims.
+
 ## Setup
 
 Use Python 3.10 or newer (the current macOS `/usr/bin/python3` is often 3.9 and is
