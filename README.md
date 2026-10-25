@@ -2,7 +2,7 @@
 
 PromptCraft AI is a college-level prompt optimization project. It fine-tunes the open-weight
 `Qwen/Qwen2.5-0.5B-Instruct` model with LoRA on the supplied prompt pairs, then exposes the
-trained adapter through Streamlit. The supplied dataset contains 82 AI-assisted draft records;
+trained adapter through Streamlit. The canonical development dataset contains 100 AI-assisted draft records;
 all records are marked `AI-assisted draft - human review required`, so this project does not
 claim human-verified labels or strong generalization.
 
@@ -34,14 +34,16 @@ Fine-tuning updates trainable adapter weights and is not equivalent to calling a
 
 ## Dataset
 
-The canonical files are [data/promptcraft_custom_dataset.csv](data/promptcraft_custom_dataset.csv)
-and `data/promptcraft_custom_dataset.jsonl`. Both contain `id`, `category`, `input_prompt`,
+The canonical development dataset is [data/promptcraft_custom_dataset_100.csv](data/promptcraft_custom_dataset_100.csv).
+The original 82-row dataset is retained as [data/promptcraft_custom_dataset.csv](data/promptcraft_custom_dataset.csv)
+for provenance and comparison. Both contain `id`, `category`, `input_prompt`,
 `target_prompt`, `intended_audience`, `requirements`, `quality_label`, and `review_status`.
 `input_prompt` is the user message and `target_prompt` is the supervised target. The original
 files are never overwritten. Quality labels and review status are reported, not used as
 ground truth. Near-duplicate inputs should be manually reviewed before academic evaluation.
 
-To create a separate 100-row augmented dataset, run:
+The 100-row dataset was created from the unchanged 82-row source plus 18 additions. To recreate
+that separate file from its inputs, run:
 
 ```bash
 python scripts/create_augmented_dataset.py
@@ -70,29 +72,49 @@ python -m pip install -r requirements.txt
 After activation, `python` and `streamlit` resolve from `.venv`. If you do not want to
 activate the environment, use `.venv/bin/python` and `.venv/bin/streamlit` explicitly.
 
-Prepare data on CPU:
+Prepare the canonical 100-row development dataset on CPU:
 
 ```bash
 python3 scripts/prepare_data.py \
-  --input data/promptcraft_custom_dataset.csv \
+  --input data/promptcraft_custom_dataset_100.csv \
   --output-dir data/processed
 ```
 
-This writes `train.jsonl`, `validation.jsonl`, `test.jsonl`, `quality_report.json`, and
-`split_manifest.json`. The split is deterministic with seed 42 and keeps categories grouped
-while preventing exact duplicate pairs. With only 82 examples, the resulting metrics are
-prototype evidence, not a production benchmark.
+This writes `train.jsonl`, `validation.jsonl`, `test.jsonl`, `quality_report.json`,
+`leakage_report.json`, and `split_manifest.json`. The manifest records the source filename,
+SHA-256 hash, seed, split IDs, proportions, and preprocessing settings. The split is
+deterministic with seed 42 and keeps categories grouped while preventing exact duplicate
+pairs. A lexical leakage audit is reported but does not detect all semantic duplicates or
+move records. With only 100 AI-assisted, unreviewed examples, resulting metrics are prototype
+evidence, not a production benchmark.
 
 ## Actual fine-tuning
+
+The reproducible experiment dataset is `data/processed_v2/`. It was prepared from the
+canonical 100-row CSV with seed 42 and includes manifest-linked source and split hashes.
+The older `data/processed/` directory is not overwritten by preparation. Before training,
+verify the fresh manifest and split files:
+
+```bash
+python3 scripts/prepare_data.py \
+  --input data/promptcraft_custom_dataset_100.csv \
+  --output-dir data/processed_v2
+```
 
 On a CUDA machine or Google Colab T4:
 
 ```bash
-python3 scripts/train.py --data-dir data/processed --quantized
+python3 scripts/train.py \
+  --data-dir data/processed_v2 \
+  --output-dir models/promptcraft-colab-run-1 \
+  --quantized
 ```
 
-The command uses QLoRA when `--quantized` is supplied and saves the adapter to
-`models/promptcraft-lora`. On CPU, omit `--quantized`, but training will be impractically
+The command uses QLoRA when `--quantized` is supplied and saves the adapter to the
+specified output directory. It evaluates and saves at the end of each epoch, selects the
+checkpoint with the lowest validation `eval_loss`, loads that checkpoint before saving the
+final adapter, and writes `experiment_metadata.json` with the selected checkpoint and
+validation loss. The held-out test split is not loaded by the training script. On CPU, omit `--quantized`, but training will be impractically
 slow and memory constrained. The defaults are three epochs, learning rate `2e-4`, effective
 batch size 16 (batch 2 x accumulation 8), sequence length 512, LoRA rank 16, alpha 32, and
 dropout 0.05. These are conservative starting points, not guarantees of quality.
@@ -100,25 +122,71 @@ On Apple Silicon, `--quantized` is rejected because bitsandbytes QLoRA requires 
 Google Colab for the practical training run.
 
 The notebook [notebooks/promptcraft_finetuning.ipynb](notebooks/promptcraft_finetuning.ipynb)
-contains the same Colab workflow. Upload the dataset, run preparation, train, and save the
-adapter before evaluating. A GPU is required for practical training; preparation and tests
-work without one.
+contains the same Colab workflow. For a fresh Colab runtime, use:
+
+```bash
+!git clone https://github.com/YASHMETKAL/promptcraft-ai.git
+%cd promptcraft-ai
+!pip install -r requirements.txt
+!python scripts/prepare_data.py --input data/promptcraft_custom_dataset_100.csv --output-dir data/processed_v2
+!python - <<'PY'
+import json
+from pathlib import Path
+manifest = json.loads(Path("data/processed_v2/split_manifest.json").read_text())
+assert manifest["dataset"]["filename"] == "promptcraft_custom_dataset_100.csv"
+assert set(manifest["split_sha256"]) == {"train", "validation", "test"}
+print(manifest["counts"])
+PY
+!nvidia-smi
+```
+
+Only after those checks should you explicitly run:
+
+```bash
+!python scripts/train.py \
+  --data-dir data/processed_v2 \
+  --output-dir models/promptcraft-colab-run-1 \
+  --quantized
+```
+
+Copy `models/promptcraft-colab-run-1/` and its `experiment_metadata.json` to persistent Drive or
+download them after training. A GPU is required for practical training; preparation and
+tests work without one.
+
+The training script refuses non-empty output directories by default and never treats
+`--output-dir` as a resume checkpoint. To resume an explicit valid checkpoint, pass
+`--resume-from-checkpoint path/to/checkpoint`. To intentionally use an existing output
+directory, pass `--allow-existing-output`; stale `experiment_metadata.json` is still
+rejected unless an explicit resume checkpoint is supplied.
 
 ## Evaluation and application
 
-After training, generate paired outputs using exactly the held-out test file:
+After training, generate a three-way comparison using exactly the held-out test file:
 
 ```bash
 python3 scripts/evaluate.py \
   --test data/processed/test.jsonl \
   --adapter models/promptcraft-lora \
-  --output outputs/evaluation_results.csv
+  --output outputs/evaluation_results.csv \
+  --seed 42
 ```
 
-The CSV includes both outputs and inference time. Fill the clarity, specificity, and intent
-preservation columns using the documented 1-5 human rubric (intent preserved, clarity,
-useful specificity, constraints included, naturalness). Blank subjective scores are not
-treated as zero. Do not edit the test examples or use them for model selection.
+The comparison CSV includes the unchanged original prompt, a deterministic
+prompt-engineering baseline, the fine-tuned output, contextual fields, and inference times.
+The split manifest also records a SHA-256 hash for each prepared split. The evaluation guard
+checks the held-out test IDs and the `test.jsonl` hash, so modifying the test file after
+preparation is rejected. The command also writes `outputs/evaluation_results_ratings.csv` and
+`outputs/evaluation_results_mapping.csv`. Candidate order is shuffled independently for
+each example using the documented seed, and the mapping records the example ID, candidate
+label, and system separately. Give reviewers only the ratings CSV when possible; it uses
+candidate labels A/B/C. Keep the mapping CSV separate until ratings are complete. Evaluation
+requires a `test.jsonl` whose IDs match the adjacent `split_manifest.json`; it does not
+silently accept train or validation files. Existing output files are protected; pass
+`--overwrite` only when intentionally replacing a prior evaluation artifact.
+Rate intent preservation, specificity, relevance, usability, and unsupported assumptions
+(where 5 means more problems) from 1 to 5. Rating fields are blank until a human evaluates
+the outputs. Do not edit the test examples or use them for model selection, and do not
+interpret the original prompt as a generated-system output.
 
 Launch Streamlit only after an adapter exists:
 
@@ -158,7 +226,9 @@ checkpoint selection on validation loss, quantization benchmarking, and a model 
 * **Missing adapter:** run preparation and `scripts/train.py`, then verify the adapter path.
 * **CUDA out of memory:** use `--quantized`, reduce sequence length or batch size, and restart
   the runtime.
-* **CPU training is slow:** use Colab with a T4; CPU mode is for validation and smoke tests.
+* **CPU or Apple Silicon training:** the current QLoRA path requires CUDA. Use Colab with a
+  T4 or better for practical training; non-quantized local runs are for validation and
+  smoke tests only.
 * **Dependency/API errors:** use a fresh Python 3.10+ environment and the pinned major-version
   ranges in `requirements.txt`.
 * **Unexpected output:** inspect the saved prompt template and ensure the tokenizer matches the

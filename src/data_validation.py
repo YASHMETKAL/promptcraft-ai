@@ -78,6 +78,61 @@ def _similarity(left: str, right: str) -> float:
     return len(left_words & right_words) / len(left_words | right_words)
 
 
+def audit_split_leakage(
+    records: list[dict[str, Any]],
+    splits: dict[str, list[dict[str, Any]]],
+    similarity_threshold: float = 0.85,
+) -> dict[str, Any]:
+    """Report normalized duplicate and high-lexical-similarity input pairs."""
+    indexed = [
+        (record, str(record.get("id", f"row-{index}")))
+        for index, record in enumerate(records, 1)
+        if isinstance(record, dict)
+    ]
+    split_by_id = {
+        str(record.get("id", f"row-{index}")): split_name
+        for split_name, split_records in splits.items()
+        for index, record in enumerate(split_records, 1)
+    }
+    exact_pairs: list[dict[str, Any]] = []
+    similarity_pairs: list[dict[str, Any]] = []
+    for index, (left, left_id) in enumerate(indexed):
+        left_prompt = _normalise(left.get("input_prompt"))
+        for right, right_id in indexed[index + 1:]:
+            right_prompt = _normalise(right.get("input_prompt"))
+            if left_prompt and left_prompt == right_prompt:
+                exact_pairs.append({
+                    "left_id": left_id,
+                    "right_id": right_id,
+                    "similarity": 1.0,
+                    "left_split": split_by_id.get(left_id),
+                    "right_split": split_by_id.get(right_id),
+                    "cross_split": split_by_id.get(left_id) != split_by_id.get(right_id),
+                })
+            score = _similarity(left_prompt, right_prompt)
+            if score >= similarity_threshold:
+                similarity_pairs.append({
+                    "left_id": left_id,
+                    "right_id": right_id,
+                    "similarity": round(score, 6),
+                    "left_split": split_by_id.get(left_id),
+                    "right_split": split_by_id.get(right_id),
+                    "cross_split": split_by_id.get(left_id) != split_by_id.get(right_id),
+                })
+    return {
+        "similarity_threshold": similarity_threshold,
+        "method": "normalized token-set Jaccard similarity; this does not detect all semantic duplicates",
+        "exact_normalized_input_pairs": exact_pairs,
+        "high_similarity_pairs": similarity_pairs,
+        "cross_split_exact_normalized_input_pairs": [
+            pair for pair in exact_pairs if pair["cross_split"]
+        ],
+        "cross_split_high_similarity_pairs": [
+            pair for pair in similarity_pairs if pair["cross_split"]
+        ],
+    }
+
+
 def validate_records(records: list[dict[str, Any]], path: str = "<memory>") -> ValidationReport:
     columns = set().union(*(record.keys() for record in records if isinstance(record, dict))) if records else set()
     missing = sorted(REQUIRED_COLUMNS - columns)

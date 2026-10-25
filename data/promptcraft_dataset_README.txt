@@ -3,12 +3,14 @@ PromptCraft AI — Custom Prompt Optimization Dataset
 
 Files
 -----
-- promptcraft_custom_dataset.csv: convenient for reviewing/editing in Excel or Google Sheets.
-- promptcraft_custom_dataset.jsonl: one JSON record per line; convenient for ML pipelines.
+- promptcraft_custom_dataset_100.csv: canonical 100-row development dataset for the current workflow.
+- promptcraft_custom_dataset.csv: retained original 82-row dataset for provenance and comparison.
+- promptcraft_custom_dataset.jsonl: legacy JSONL representation, if present.
 
 Current size
 ------------
-82 examples.
+The canonical development dataset contains 100 examples. The retained original contains 82
+examples. Both are AI-assisted drafts and neither is human-verified.
 
 Purpose
 -------

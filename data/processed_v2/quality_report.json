@@ -1,0 +1,35 @@
+{
+  "path": "data/promptcraft_custom_dataset_100.csv",
+  "row_count": 100,
+  "valid_rows": 100,
+  "invalid_rows": 0,
+  "missing_required_columns": [],
+  "empty_input_rows": [],
+  "empty_target_rows": [],
+  "malformed_rows": [],
+  "exact_duplicate_rows": [],
+  "near_duplicate_pairs": [],
+  "categories": {
+    "education": 11,
+    "coding": 11,
+    "research": 11,
+    "writing": 11,
+    "presentations": 8,
+    "image_generation": 9,
+    "data_analysis": 8,
+    "career": 7,
+    "security": 6,
+    "creative": 6,
+    "productivity": 6,
+    "health_information": 6
+  },
+  "review_statuses": {
+    "ai-assisted draft - human review required": 100
+  },
+  "quality_labels": {
+    "pending_human_rating": 100
+  },
+  "warnings": [
+    "Dataset contains records that are not marked reviewed/approved; labels are not ground truth."
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "similarity_threshold": 0.85,
+  "method": "normalized token-set Jaccard similarity; this does not detect all semantic duplicates",
+  "exact_normalized_input_pairs": [],
+  "high_similarity_pairs": [],
+  "cross_split_exact_normalized_input_pairs": [],
+  "cross_split_high_similarity_pairs": []
+}

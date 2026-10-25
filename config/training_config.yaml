@@ -10,3 +10,9 @@ lora_r: 16
 lora_alpha: 32
 lora_dropout: 0.05
 output_dir: models/promptcraft-lora
+eval_strategy: epoch
+save_strategy: epoch
+load_best_model_at_end: true
+metric_for_best_model: eval_loss
+greater_is_better: false
+save_total_limit: 2

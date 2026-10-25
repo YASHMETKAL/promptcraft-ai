@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import random
 from pathlib import Path
 from typing import Any
 
-from .data_validation import load_records, validate_records
+from .data_validation import audit_split_leakage, load_records, validate_records
+
+SPLIT_PROPORTIONS = {"train": 0.70, "validation": 0.15, "test": 0.15}
+SIMILARITY_THRESHOLD = 0.85
 
 
 def format_example(record: dict[str, Any]) -> dict[str, Any]:
@@ -23,6 +27,8 @@ def format_example(record: dict[str, Any]) -> dict[str, Any]:
         "target_prompt": record["target_prompt"],
         "text": f"<|user|>\n{user}\n<|assistant|>\n{record['target_prompt']}",
         "category": record.get("category", "general"),
+        "intended_audience": record.get("intended_audience", ""),
+        "requirements": record.get("requirements", ""),
     }
 
 
@@ -46,9 +52,18 @@ def split_records(records: list[dict[str, Any]], seed: int = 42) -> dict[str, li
     return splits
 
 
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def prepare_dataset(input_path: str | Path, output_dir: str | Path, seed: int = 42) -> dict[str, Any]:
-    records = load_records(input_path)
-    report = validate_records(records, str(input_path))
+    source = Path(input_path)
+    records = load_records(source)
+    report = validate_records(records, str(source))
     if report.missing_required_columns or report.invalid_rows:
         raise ValueError(f"Dataset is invalid: {report.to_dict()}")
     if report.exact_duplicate_rows:
@@ -61,8 +76,40 @@ def prepare_dataset(input_path: str | Path, output_dir: str | Path, seed: int = 
             for row in rows:
                 handle.write(json.dumps(format_example(row), ensure_ascii=False) + "\n")
     (output / "quality_report.json").write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
+    leakage = audit_split_leakage(records, splits, SIMILARITY_THRESHOLD)
+    (output / "leakage_report.json").write_text(json.dumps(leakage, indent=2), encoding="utf-8")
+    realized_proportions = {
+        key: len(value) / len(records) if records else 0.0
+        for key, value in splits.items()
+    }
     (output / "split_manifest.json").write_text(
-        json.dumps({"seed": seed, "counts": {key: len(value) for key, value in splits.items()}}, indent=2),
+        json.dumps({
+            "dataset": {
+                "filename": source.name,
+                "path": str(source),
+                "sha256": _sha256(source),
+                "record_count": len(records),
+            },
+            "seed": seed,
+            "split_strategy": "category-aware deterministic shuffle",
+            "requested_proportions": SPLIT_PROPORTIONS,
+            "realized_proportions": realized_proportions,
+            "counts": {key: len(value) for key, value in splits.items()},
+            "ids": {key: [row.get("id") for row in value] for key, value in splits.items()},
+            "split_sha256": {
+                key: _sha256(output / f"{key}.jsonl")
+                for key in splits
+            },
+            "preprocessing": {
+                "similarity_threshold": SIMILARITY_THRESHOLD,
+                "preserve_context_fields": ["category", "intended_audience", "requirements"],
+                "output_format": "JSONL",
+            },
+        }, indent=2),
         encoding="utf-8",
     )
-    return {"report": report.to_dict(), "counts": {key: len(value) for key, value in splits.items()}}
+    return {
+        "report": report.to_dict(),
+        "counts": {key: len(value) for key, value in splits.items()},
+        "leakage": leakage,
+    }
